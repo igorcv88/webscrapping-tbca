@@ -26,74 +26,91 @@ interface NutrientsDB {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function getNutrientsAndInsertInDB() {
+  // Busca alimentos que ainda NÃO estão na tabela de nutrientes (Smart Resume)
   const foods = await knex("foods")
     .select("code", "url")
     .whereNotIn("code", knex("nutrients").select("food_code").distinct());
 
-  console.log(`\n🧬 FASE 3 (LEAN): Extraindo apenas o essencial de ${foods.length} alimentos...`);
+  console.log(`\n🧬 FASE 3: Extraindo nutrientes de ${foods.length} alimentos...`);
 
   for (const food of foods) {
     process.stdout.write(`\r📡 Nutrientes de: ${food.code}... `);
+
     const TARGET_URL = food.url.startsWith('http') ? food.url : `https://www.tbca.net.br/base-dados/${food.url}`;
 
     try {
       const { data } = await axiosClient.get(TARGET_URL);
       const $ = cheerio.load(data);
+
       const nutrientRows = $("#tabela1 tbody tr").toArray();
       const nutrientsToInsert: NutrientsDB[] = [];
 
       for (const row of nutrientRows) {
         const cells = $(row).find("td").toArray();
 
-        if (cells.length >= 3) { // Reduzido: Só precisamos das 3 primeiras colunas
+        if (cells.length >= 9) { // A tabela TBCA completa tem 9 colunas
           const component = $(cells[0]).text().trim();
           const unity = $(cells[1]).text().trim();
 
+          // Helper para limpar e converter números
           const parseNum = (val: string) => {
             const clean = val.trim().replace(',', '.');
-            if (clean === 'tr' || clean === '-' || clean === '') return 0;
-            const parsed = parseFloat(clean);
-            return isNaN(parsed) ? 0 : parsed;
+            return (clean === 'tr' || clean === '-' || clean === '') ? 0 : parseFloat(clean);
           };
 
-          // 2. O PUSH LIMPO: Sem referências ou desvios
           nutrientsToInsert.push({
             food_code: food.code,
             component: component,
             unity: unity,
             value: parseNum($(cells[2]).text()),
+            standard_deviation: $(cells[3]).text().trim(),
+            min_value: parseNum($(cells[4]).text()),
+            max_value: parseNum($(cells[5]).text()),
+            number_of_data: parseInt($(cells[6]).text().trim()) || 0,
+            references: $(cells[7]).text().trim(),
+            type_of_data: $(cells[8]).text().trim()
           });
         }
       }
 
       if (nutrientsToInsert.length > 0) {
+        // JEITO NINJA: Uma única transação por alimento (muito mais rápido)
         await knex.transaction(async (trx) => {
           await trx("nutrients").insert(nutrientsToInsert);
         });
       }
+
     } catch (error: any) {
-      console.log(`\n❌ Erro no código ${food.code}: ${error.message}`);
+      console.log(`\n❌ Erro ao extrair nutrientes do código ${food.code}: ${error.message}`);
     }
+
+    // Delay de segurança para respeitar o servidor
     await delay(500);
   }
 }
 
 async function setupNutrientsTable() {
-  // ATENÇÃO: Se quiser mudar a estrutura agora, você precisará dar um DROP TABLE manual no TablePlus antes!
   const hasTable = await knex.schema.hasTable('nutrients');
   if (!hasTable) {
-    console.log("🛠️ Criando tabela 'nutrients' (Versão Lean)...");
+    console.log("🛠️ Criando tabela 'nutrients'...");
     await knex.schema.createTable('nutrients', (table) => {
       table.increments('id').primary();
       table.string('food_code').notNullable();
       table.string('component');
       table.string('unity');
       table.float('value');
+      table.string('standard_deviation');
+      table.float('min_value');
+      table.float('max_value');
+      table.integer('number_of_data');
+      table.text('references');
+      table.string('type_of_data');
 
+      // Índices para performance monstra no Mobile
       table.index(['food_code']);
       table.index(['component']);
     });
-    console.log('✅ Tabela limpa e indexada!');
+    console.log('✅ Tabela "nutrients" pronta para o combate!');
   }
 }
 

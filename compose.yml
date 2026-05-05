@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: tbca_mysql_container
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 511998
+      MYSQL_DATABASE: tbca_scraper
+      MYSQL_USER: igorcv88
+      MYSQL_PASSWORD: 511998
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
